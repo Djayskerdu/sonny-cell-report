@@ -1257,7 +1257,8 @@ function HomeScreen({ members, leaders, loading, error, onRetry, onEnter }) {
         {[
           {g:"Boys", Icon:UserCircle2, networkLeader:NETWORK_LEADERS.Boys, count:boysLeaders, cls:"door-boys"},
           {g:"Girls",Icon:Users,       networkLeader:NETWORK_LEADERS.Girls,count:girlsLeaders,cls:"door-girls"},
-        ].map(({g,Icon,networkLeader,count,cls})=>(
+        ].filter(({networkLeader})=>networkLeader && String(networkLeader).trim()!=="")
+         .map(({g,Icon,networkLeader,count,cls})=>(
           <button key={g} className={`door ${cls}`} onClick={()=>onEnter(g)}>
             <Icon size={34} strokeWidth={1.6}/>
             <span className="door-network-label">Network Leader</span>
