@@ -39,6 +39,28 @@ function isLGLeader(member) {
   return toBool(member.LGLEADER);
 }
 
+function isCloseCell(member) { return member.Status === "Close Cell"; }
+// Someone counts as a lifegroup leader once they've EITHER been moved to Close Cell
+// status OR have the LG Leader checkbox ticked — the checkbox reflects that milestone
+// even before Status has been formally updated. Mirrors the same rule used on the
+// Pastors' Network Leaders Dashboard, so totals match across both apps.
+function countsAsLifegroupLeader(member) { return isCloseCell(member) || isLGLeader(member); }
+// True for the row that IS this network's own boys/girls leader (e.g. Deonie Abraham's
+// own row, which — like any other root-level leader — has a blank ParentID). That
+// person is a Network Leader, not a Lifegroup Leader, so this keeps them out of
+// lifegroup-leader counts/labels without touching the Open Cell / Close Cell lists.
+function isOwnNetworkLeaderRow(member) {
+  if (!member) return false;
+  const boys = String(NETWORK_LEADERS.Boys || "").trim().toLowerCase();
+  const girls = String(NETWORK_LEADERS.Girls || "").trim().toLowerCase();
+  if (!boys && !girls) return false;
+  const name = String(member.Name || "").trim().toLowerCase();
+  return (!!boys && name === boys) || (!!girls && name === girls);
+}
+function countOwnNetworkLeaderRows(list) {
+  return list.filter(isOwnNetworkLeaderRow).length;
+}
+
 function fileToRaw(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1224,9 +1246,10 @@ function lgLabel(n) { return `${n} lifegroup${n !== 1 ? "s" : ""}`; }
 
 function HomeScreen({ members, leaders, loading, error, onRetry, onEnter }) {
   const allNonRoot = members.filter(m => m.ParentID);
-  const closed = allNonRoot.filter(m=>m.Status==="Close Cell").length;
-  const boysLeaders  = leaders.filter(l=>l.Gender==="Boys").length;
-  const girlsLeaders = leaders.filter(l=>l.Gender==="Girls").length;
+  const closed = allNonRoot.filter(countsAsLifegroupLeader).length;
+  const ownLeaderRows = countOwnNetworkLeaderRows(leaders);
+  const boysLeaders  = leaders.filter(l=>l.Gender==="Boys").length  - countOwnNetworkLeaderRows(leaders.filter(l=>l.Gender==="Boys"));
+  const girlsLeaders = leaders.filter(l=>l.Gender==="Girls").length - countOwnNetworkLeaderRows(leaders.filter(l=>l.Gender==="Girls"));
   return (
     <div className="home-wrap">
       <div className="home-hero">
@@ -1243,9 +1266,9 @@ function HomeScreen({ members, leaders, loading, error, onRetry, onEnter }) {
       )}
       <div className="stats">
         {[
-          {n: allNonRoot.length, l:"Total disciples"},
-          {n: leaders.length,    l:"CLOSE CELL"},
-          {n: closed,            l:"LIFEGROUP LEADERS"},
+          {n: allNonRoot.length,             l:"Total disciples"},
+          {n: leaders.length - ownLeaderRows, l:"CLOSE CELL"},
+          {n: closed,                         l:"LIFEGROUP LEADERS"},
         ].map(s=>(
           <div key={s.l} className="stat">
             <span className="stat-n">{loading?"—":s.n}</span>
@@ -1283,6 +1306,7 @@ function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader,
     });
   const acc  = gender==="Boys"?"acc-boys":"acc-girls";
   const networkLeader = NETWORK_LEADERS[gender] || gender;
+  const leaderCount = list.length - countOwnNetworkLeaderRows(list);
   return (
     <div className={`screen ${acc}`}>
       <PhotoViewModal url={viewingPhoto?.url} name={viewingPhoto?.name} onClose={()=>setViewingPhoto(null)}/>
@@ -1291,7 +1315,7 @@ function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader,
         <div>
           <span className="eyebrow-sm">Network Leader · {networkLeader}</span>
           <h1>{gender}</h1>
-          <p className="sub">{list.length} lifegroup {list.length===1?"leader":"leaders"}</p>
+          <p className="sub">{leaderCount} lifegroup {leaderCount===1?"leader":"leaders"}</p>
         </div>
         <button className="btn-primary" onClick={onAddLeader}><UserPlus size={15}/>Add leader</button>
       </div>
@@ -1339,7 +1363,9 @@ function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader,
                   >
                     <Avatar url={l.PhotoURL} name={l.Name} size={44}/>
                   </span>
-                  <span className="lc-tag">Lifegroup Leader</span>
+                  <span className={`lc-tag${isOwnNetworkLeaderRow(l)?" lc-tag-network":""}`}>
+                    {isOwnNetworkLeaderRow(l) ? "Network Leader" : "Lifegroup Leader"}
+                  </span>
                 </div>
                 <span className="lc-name">{l.Name}</span>
                 <div className="lc-counts">
@@ -1385,7 +1411,7 @@ function LeaderScreen({ gender, leader, members, goHome, goGender, onPickCell, o
         <div className="screen-head-leader">
           <Avatar url={leader.PhotoURL} name={leader.Name} size={54}/>
           <div>
-            <span className="eyebrow-sm">Lifegroup Leader · under {networkLeader}</span>
+            <span className="eyebrow-sm">{isOwnNetworkLeaderRow(leader) ? "Network Leader" : `Lifegroup Leader · under ${networkLeader}`}</span>
             <h1>{leader.Name}</h1>
             <p className="sub">{mine.length} {mine.length===1?"disciple":"disciples"} total</p>
           </div>
@@ -2190,6 +2216,7 @@ body{background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMac
 .leader-card:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(31,42,36,.08);}
 .lc-avatar-row{display:flex;align-items:center;gap:10px;}
 .lc-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);}
+.lc-tag-network{color:var(--ink);}
 .lc-name{font-size:18px;font-weight:700;}
 .lc-counts{display:flex;gap:6px;flex-wrap:wrap;}
 .lc-pill{font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;}
