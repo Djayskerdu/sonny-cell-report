@@ -1061,17 +1061,37 @@ function LeaderModal({ open, onClose, onSave, gender, saving, photoSaving, initi
   );
 }
 
-function ConfirmDelete({ open, name, onCancel, onConfirm, deleting }) {
+// All IDs below a given member (children, grandchildren, ...).
+function collectDescendantIds(rootId, allMembers) {
+  const out = [];
+  const queue = [String(rootId)];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const cur = queue.shift();
+    allMembers.forEach(m=>{
+      if (String(m.ParentID)===cur && !seen.has(String(m.ID))) {
+        seen.add(String(m.ID)); out.push(String(m.ID)); queue.push(String(m.ID));
+      }
+    });
+  }
+  return out;
+}
+
+function ConfirmDelete({ open, name, onCancel, onConfirm, deleting, extraCount=0, isLeader=false }) {
   if (!open) return null;
   return (
     <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onCancel();}}>
       <div className="modal modal-sm">
         <div className="modal-head">
-          <h2>Remove member?</h2>
+          <h2>{isLeader?"Remove leader?":"Remove member?"}</h2>
           <button className="icon-btn" onClick={onCancel}><X size={18}/></button>
         </div>
         <div className="modal-body">
-          <p className="confirm-txt">This removes <strong>{name}</strong> from the sheet. This can't be undone.</p>
+          <p className="confirm-txt">
+            This removes <strong>{name}</strong>
+            {extraCount>0 && <> and everyone under them (<strong>{extraCount} {extraCount===1?"member":"members"}</strong>)</>}
+            {" "}from the sheet. This can't be undone.
+          </p>
           <div className="modal-foot">
             <button className="btn-ghost" onClick={onCancel}>Cancel</button>
             <button className="btn-danger" onClick={onConfirm} disabled={deleting}>
@@ -1295,7 +1315,7 @@ function HomeScreen({ members, leaders, loading, error, onRetry, onEnter }) {
   );
 }
 
-function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader, onAddLeader, onEditLeader }) {
+function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader, onAddLeader, onEditLeader, onDeleteLeader }) {
   const [viewingPhoto, setViewingPhoto] = useState(null);
   const list = leaders
     .filter(l=>l.Gender===gender)
@@ -1351,6 +1371,19 @@ function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader,
                 >
                   <Pencil size={13}/>
                 </button>
+                {onDeleteLeader && (
+                  <button
+                    type="button"
+                    className="icon-btn icon-btn-danger lc-delete-btn"
+                    title="Remove leader"
+                    onClick={e=>{ e.stopPropagation(); onDeleteLeader(l); }}
+                    style={{ position:"absolute", top:8, right:42, zIndex:2,
+                      background:"rgba(255,255,255,0.92)", borderRadius:"50%",
+                      boxShadow:"0 1px 3px rgba(0,0,0,0.15)" }}
+                  >
+                    <Trash2 size={13}/>
+                  </button>
+                )}
                 <button className="leader-card" onClick={()=>onPickLeader(l)}>
                 <div className="lc-avatar-row">
                   <span
@@ -1948,8 +1981,11 @@ export default function App() {
     if(!delTarget) return;
     setDeleting(true);
     try {
-      await apiPost({action:"deleteMember",id:delTarget.ID});
-      setMembers(prev=>prev.filter(m=>String(m.ID)!==String(delTarget.ID)));
+      const cascade = !!delTarget.__cascade;
+      await apiPost({action:"deleteMember",id:delTarget.ID,cascade});
+      const gone = new Set([String(delTarget.ID)]);
+      if (cascade) collectDescendantIds(delTarget.ID, members).forEach(id=>gone.add(id));
+      setMembers(prev=>prev.filter(m=>!gone.has(String(m.ID))));
       setDelTarget(null);
     } catch(err) {
       setError(err.name === "AbortError" ? "Request timed out. Try again." : "Couldn't remove. Try again.");
@@ -2095,7 +2131,7 @@ export default function App() {
 
       <main className="main">
         {route.screen==="home"&&<HomeScreen members={members} leaders={leaders} loading={loading} error={error} onRetry={load} onEnter={goGender}/>}
-        {route.screen==="gender"&&<GenderScreen gender={route.gender} leaders={leaders} members={members} loading={loading} goHome={goHome} onPickLeader={l=>goLeader(route.gender,l)} onAddLeader={()=>{setEditingLdr(null);setLdrModal(true);}} onEditLeader={l=>{setEditingLdr(l);setLdrModal(true);}}/>}
+        {route.screen==="gender"&&<GenderScreen gender={route.gender} leaders={leaders} members={members} loading={loading} goHome={goHome} onPickLeader={l=>goLeader(route.gender,l)} onAddLeader={()=>{setEditingLdr(null);setLdrModal(true);}} onEditLeader={l=>{setEditingLdr(l);setLdrModal(true);}} onDeleteLeader={l=>setDelTarget({...l,__cascade:true})}/>}
         {route.screen==="leader"&&<LeaderScreen gender={route.gender} leader={route.leader} members={members} goHome={goHome} goGender={()=>goGender(route.gender)} onPickCell={cell=>cell==="Open Cell"?goOpenCell(route.gender,route.leader):goCloseCell(route.gender,route.leader)} onEditLeader={l=>{setEditingLdr(l);setLdrModal(true);}}/>}
         {route.screen==="open"&&<OpenCellScreen gender={route.gender} leader={route.leader} members={members} loading={loading} goHome={goHome} goGender={()=>goGender(route.gender)} goLeader={()=>goLeader(route.gender,route.leader)} onAdd={()=>{setEditing(null);setModalOpen(true);}} onEdit={m=>{setEditing(m);setModalOpen(true);}} onDelete={m=>setDelTarget(m)} onViewLGLeaderCell={handleViewLGLeaderCell} onProceedToClose={handleProceedToCloseClick} onPickTimothy={handlePickTimothy}/>}
         {route.screen==="close"&&<CloseCellScreen gender={route.gender} leader={route.leader} members={members} loading={loading} goHome={goHome} goGender={()=>goGender(route.gender)} goLeader={()=>goLeader(route.gender,route.leader)} onAdd={()=>{setEditing(null);setModalOpen(true);}} onEdit={m=>{setEditing(m);setModalOpen(true);}} onDelete={m=>setDelTarget(m)} onPickSubLeader={sub=>goSubLeader(route.gender,route.leader,sub)}/>}
@@ -2125,7 +2161,7 @@ export default function App() {
         photoSaving={photoSavingLdr}
         initial={editingLdr}
       />
-      <ConfirmDelete open={!!delTarget} name={delTarget?.Name} onCancel={()=>setDelTarget(null)} onConfirm={handleDelete} deleting={deleting}/>
+      <ConfirmDelete open={!!delTarget} name={delTarget?.Name} isLeader={!!delTarget?.__cascade} extraCount={delTarget?.__cascade?collectDescendantIds(delTarget.ID,members).length:0} onCancel={()=>setDelTarget(null)} onConfirm={handleDelete} deleting={deleting}/>
       <ProceedToCloseCellModal
         open={!!proceedTarget}
         member={proceedTarget}
