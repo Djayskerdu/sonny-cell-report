@@ -27,6 +27,11 @@ const NETWORK_LEADERS = {
   Girls: "",
 };
 
+// Display-only names. The stored Gender values ("Boys"/"Girls") stay the same
+// so existing sheet data and the Apps Script keep working.
+const GENDER_LABEL = { Boys: "Men", Girls: "Women" };
+const genderLabel = g => GENDER_LABEL[g] || g;
+
 function toBool(v) {
   return v === true || v === "TRUE" || v === "true" || v === 1;
 }
@@ -1264,12 +1269,30 @@ function GroupedMembers({ members, allMembers, onEdit, onDelete, onViewCell, onP
 
 function lgLabel(n) { return `${n} lifegroup${n !== 1 ? "s" : ""}`; }
 
+// All disciples under one network (everyone below the root leaders of that gender,
+// at any depth).
+function getNetworkDisciples(gender, members) {
+  const roots = members.filter(m => (!m.ParentID || String(m.ParentID).trim() === "") && m.Gender === gender);
+  const result = [];
+  const queue = [...roots];
+  while (queue.length) {
+    const node = queue.shift();
+    members.filter(m => String(m.ParentID) === String(node.ID)).forEach(c => { result.push(c); queue.push(c); });
+  }
+  return result;
+}
+function countNetworkDisciples(gender, members) {
+  return getNetworkDisciples(gender, members).length;
+}
+
 function HomeScreen({ members, leaders, loading, error, onRetry, onEnter }) {
   const allNonRoot = members.filter(m => m.ParentID);
   const closed = allNonRoot.filter(countsAsLifegroupLeader).length;
   const ownLeaderRows = countOwnNetworkLeaderRows(leaders);
   const boysLeaders  = leaders.filter(l=>l.Gender==="Boys").length  - countOwnNetworkLeaderRows(leaders.filter(l=>l.Gender==="Boys"));
   const girlsLeaders = leaders.filter(l=>l.Gender==="Girls").length - countOwnNetworkLeaderRows(leaders.filter(l=>l.Gender==="Girls"));
+  const boysDisciples  = countNetworkDisciples("Boys", members);
+  const girlsDisciples = countNetworkDisciples("Girls", members);
   return (
     <div className="home-wrap">
       <div className="home-hero">
@@ -1298,15 +1321,16 @@ function HomeScreen({ members, leaders, loading, error, onRetry, onEnter }) {
       </div>
       <div className="doors">
         {[
-          {g:"Boys", Icon:UserCircle2, networkLeader:NETWORK_LEADERS.Boys, count:boysLeaders, cls:"door-boys"},
-          {g:"Girls",Icon:Users,       networkLeader:NETWORK_LEADERS.Girls,count:girlsLeaders,cls:"door-girls"},
+          {g:"Boys", Icon:UserCircle2, networkLeader:NETWORK_LEADERS.Boys, count:boysLeaders, disciples:boysDisciples, cls:"door-boys"},
+          {g:"Girls",Icon:Users,       networkLeader:NETWORK_LEADERS.Girls,count:girlsLeaders, disciples:girlsDisciples,cls:"door-girls"},
         ].filter(({networkLeader})=>networkLeader && String(networkLeader).trim()!=="")
-         .map(({g,Icon,networkLeader,count,cls})=>(
+         .map(({g,Icon,networkLeader,count,disciples,cls})=>(
           <button key={g} className={`door ${cls}`} onClick={()=>onEnter(g)}>
             <Icon size={34} strokeWidth={1.6}/>
             <span className="door-network-label">Network Leader</span>
             <span className="door-title">{networkLeader}</span>
-            <span className="door-count">{loading?"…":`${count} lifegroup leader${count!==1?"s":""}`}</span>
+            <span className="door-count">{loading?"…":`${count} Lifegroup Leader${count!==1?"s":""}`}</span>
+            <span className="door-count">{loading?"…":`${disciples} Total Disciple${disciples!==1?"s":""}`}</span>
             <span className="door-go">Open <ChevronRight size={14}/></span>
           </button>
         ))}
@@ -1325,17 +1349,22 @@ function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader,
       return cb - ca;
     });
   const acc  = gender==="Boys"?"acc-boys":"acc-girls";
-  const networkLeader = NETWORK_LEADERS[gender] || gender;
+  const networkLeader = NETWORK_LEADERS[gender] || genderLabel(gender);
   const leaderCount = list.length - countOwnNetworkLeaderRows(list);
+  // Active / Inactive counts cover EVERY disciple in this network (all levels),
+  // not just the lifegroup leaders. Blank status counts as Active.
+  const networkDisciples = getNetworkDisciples(gender, members);
+  const inactiveCount = networkDisciples.filter(m=>m.LifegroupStatus==="Inactive").length;
+  const activeCount = networkDisciples.length - inactiveCount;
   return (
     <div className={`screen ${acc}`}>
       <PhotoViewModal url={viewingPhoto?.url} name={viewingPhoto?.name} onClose={()=>setViewingPhoto(null)}/>
-      <Breadcrumb crumbs={[{label:"Home",onClick:goHome}]} current={gender}/>
+      <Breadcrumb crumbs={[{label:"Home",onClick:goHome}]} current={genderLabel(gender)}/>
       <div className="screen-head">
         <div>
           <span className="eyebrow-sm">Network Leader · {networkLeader}</span>
-          <h1>{gender}</h1>
-          <p className="sub">{leaderCount} lifegroup {leaderCount===1?"leader":"leaders"}</p>
+          <h1>{genderLabel(gender)}</h1>
+          <p className="sub">{leaderCount} Lifegroup {leaderCount===1?"Leader":"Leaders"} · {activeCount} Active · {inactiveCount} Inactive</p>
         </div>
         <button className="btn-primary" onClick={onAddLeader}><UserPlus size={15}/>Add leader</button>
       </div>
@@ -1343,7 +1372,7 @@ function GenderScreen({ gender, leaders, members, loading, goHome, onPickLeader,
       : list.length===0 ? (
         <div className="empty">
           <p className="empty-title">No leaders yet</p>
-          <p className="empty-sub">Add the first {gender.toLowerCase()} lifegroup leader.</p>
+          <p className="empty-sub">Add the first {genderLabel(gender).toLowerCase()} lifegroup leader.</p>
           <button className="btn-primary" onClick={onAddLeader}><Plus size={15}/>Add leader</button>
         </div>
       ) : (
@@ -1432,14 +1461,14 @@ function LeaderScreen({ gender, leader, members, goHome, goGender, onPickCell, o
   const mine = members.filter(m=>String(m.ParentID)===String(leader.ID));
   const open  = mine.filter(m=>(m.Status||"Open Cell")==="Open Cell");
   const close = mine.filter(m=>m.Status==="Close Cell");
-  const networkLeader = NETWORK_LEADERS[gender]||gender;
+  const networkLeader = NETWORK_LEADERS[gender]||genderLabel(gender);
   const getSchedules = list => [...new Map(list.map(m=>{
     const d=(m.ScheduleDay||"").trim(), t=(m.ScheduleTime||"").trim();
     return [`${d}|${t}`,{day:d,time:t}];
   })).values()].filter(s=>s.day||s.time);
   return (
     <div className={`screen ${acc}`}>
-      <Breadcrumb crumbs={[{label:"Home",onClick:goHome},{label:gender,onClick:goGender}]} current={leader.Name}/>
+      <Breadcrumb crumbs={[{label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender}]} current={leader.Name}/>
       <div className="screen-head">
         <div className="screen-head-leader">
           <Avatar url={leader.PhotoURL} name={leader.Name} size={54}/>
@@ -1485,7 +1514,7 @@ function OpenCellScreen({ gender, leader, members, loading, goHome, goGender, go
   return (
     <div className={`screen ${acc}`}>
       <Breadcrumb crumbs={[
-        {label:"Home",onClick:goHome},{label:gender,onClick:goGender},{label:leader.Name,onClick:goLeader},
+        {label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender},{label:leader.Name,onClick:goLeader},
       ]} current="Open Cell"/>
       <div className="screen-head">
         <div>
@@ -1517,7 +1546,7 @@ function LGLeaderCellScreen({ gender, leader, lglMember, members, loading, goHom
   return (
     <div className={`screen ${acc}`}>
       <Breadcrumb crumbs={[
-        {label:"Home",onClick:goHome},{label:gender,onClick:goGender},
+        {label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender},
         {label:leader.Name,onClick:goLeader},{label:"Open Cell",onClick:goOpenCell},
       ]} current={`${lglMember.Name}'s Cell`}/>
       <div className="screen-head">
@@ -1538,6 +1567,7 @@ function LGLeaderCellScreen({ gender, leader, lglMember, members, loading, goHom
             <p className="sub" style={{marginTop:6}}>{list.length} open cell {list.length===1?"member":"members"}</p>
           </div>
         </div>
+        <button className="btn-primary" onClick={onAdd}><Plus size={15}/>Add member</button>
       </div>
       <div className="lgl-notice">
         <Users size={14}/>
@@ -1586,7 +1616,7 @@ function CloseCellScreen({ gender, leader, members, loading, goHome, goGender, g
   return (
     <div className={`screen ${acc}`}>
       <Breadcrumb crumbs={[
-        {label:"Home",onClick:goHome},{label:gender,onClick:goGender},{label:leader.Name,onClick:goLeader},
+        {label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender},{label:leader.Name,onClick:goLeader},
       ]} current="Close Cell"/>
       <div className="screen-head">
         <div>
@@ -1662,7 +1692,7 @@ function SubLeaderScreen({ gender, leader, subLeader, members, goHome, goGender,
   return (
     <div className={`screen ${acc}`}>
       <Breadcrumb crumbs={[
-        {label:"Home",onClick:goHome},{label:gender,onClick:goGender},
+        {label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender},
         {label:leader.Name,onClick:goLeader},{label:"Close Cell",onClick:goCloseCell},
       ]} current={subLeader.Name}/>
       <div className="screen-head">
@@ -1708,7 +1738,7 @@ function SubLeaderOpenScreen({ gender, leader, subLeader, members, loading, goHo
   return (
     <div className={`screen ${acc}`}>
       <Breadcrumb crumbs={[
-        {label:"Home",onClick:goHome},{label:gender,onClick:goGender},
+        {label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender},
         {label:leader.Name,onClick:goLeader},{label:"Close Cell",onClick:goCloseCell},{label:subLeader.Name,onClick:goSubLeader},
       ]} current="Open Cell"/>
       <div className="screen-head">
@@ -1755,7 +1785,7 @@ function SubLeaderCloseScreen({ gender, leader, subLeader, members, loading, goH
   return (
     <div className={`screen ${acc}`}>
       <Breadcrumb crumbs={[
-        {label:"Home",onClick:goHome},{label:gender,onClick:goGender},
+        {label:"Home",onClick:goHome},{label:genderLabel(gender),onClick:goGender},
         {label:leader.Name,onClick:goLeader},{label:"Close Cell",onClick:goCloseCell},{label:subLeader.Name,onClick:goSubLeader},
       ]} current="Close Cell"/>
       <div className="screen-head">
