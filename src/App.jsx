@@ -3,10 +3,17 @@ import {
   Users, UserCircle2, Plus, X, Pencil, Trash2, MapPin,
   Loader2, RefreshCw, AlertCircle, ChevronRight, UserPlus,
   Home, Circle, Calendar, Clock, FileText, ArrowUpRight, ZoomIn,
-  Camera, Check, Move, Eye
+  Camera, Check, Move, Eye, Phone, Filter, ClipboardList, LayoutDashboard
 } from "lucide-react";
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzAzO7jPP0gzGS2soah3AVCIXLFMwtxVMHc37gqHRJZPQm1Dcvpd3-SLOOF0V6wQRjkGg/exec";
+
+// ── Consolidation (First Timer / VIP) — read-only follow-up list.
+//    Shows ONLY the First Timers assigned to THIS network's leaders.
+const CONSOLIDATION_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwxnFrOjZJ1bg4_BgkmY7QttrZKGT1GTojtcqqZ9REJGEtT8q3XwQRTqinGgyz9MrM/exec";
+const CONSOLIDATION_NETWORK_ID = "claudio";
+const CONSOLIDATION_NETWORK_LABEL = "Claudio Network";
+const FOLLOWUP_STATUSES = ["Not Yet Contacted","Contacted","Invited to Cell","Attending Cell","Inactive"];
 
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
@@ -1838,11 +1845,126 @@ function SubLeaderCloseScreen({ gender, leader, subLeader, members, loading, goH
 // ════════════════════════════════════════════════════════════════════
 //  APP ROOT
 // ════════════════════════════════════════════════════════════════════
+// ── Consolidation tab ───────────────────────────────────────────────────
+function ftStatusClass(status) {
+  if (status === "Attending Cell") return "status-good";
+  if (status === "Invited to Cell" || status === "Contacted") return "status-mid";
+  if (status === "Inactive") return "status-bad";
+  return "status-new";
+}
+const FT_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function ftFormatDate(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  const iso = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(d);
+  const [y, m, day] = iso.split("-");
+  return `${FT_MONTHS[parseInt(m, 10) - 1]} ${parseInt(day, 10)}, ${y}`;
+}
+
+function ConsolidationScreen() {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [filterStatus, setFilterStatus] = useState("All");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const res  = await fetch(CONSOLIDATION_SCRIPT_URL, { method:"GET" });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || "Failed to load");
+      setRecords((json.data && json.data.records) || []);
+    } catch { setError("Couldn't load First Timer records. Try again."); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // Only the First Timers assigned to THIS network's leaders.
+  const mine = records.filter(r => r.AssignedNetworkId === CONSOLIDATION_NETWORK_ID);
+  const filtered = mine
+    .filter(r => filterStatus==="All" || r.FollowUpStatus===filterStatus)
+    .sort((a,b)=> String(b.DateEncoded||"").localeCompare(String(a.DateEncoded||"")));
+  const stats = [
+    { n: mine.length,                                                          l: "Assigned to Us" },
+    { n: mine.filter(r=>r.FollowUpStatus==="Not Yet Contacted").length,        l: "Not Yet Contacted" },
+    { n: mine.filter(r=>r.FollowUpStatus==="Attending Cell").length,           l: "Now Attending a Cell" },
+  ];
+
+  return (
+    <div className="consol-wrap">
+      <div className="home-hero">
+        <span className="eyebrow">Consolidation · {CONSOLIDATION_NETWORK_LABEL}</span>
+        <h1>First Timers &amp; VIPs</h1>
+        <p className="lede">First Timers assigned to this network for follow-up. This is a live, read-only
+          view — new records and status changes are made in the Consolidation System app.</p>
+      </div>
+
+      {error && (
+        <div className="error-box"><AlertCircle size={15}/>{error}
+          <button className="link-btn" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <div className="stats">
+        {stats.map(s=>(
+          <div key={s.l} className="stat">
+            <span className="stat-n">{loading?"—":s.n}</span>
+            <span className="stat-l">{s.l}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="screen-head">
+        <div className="filter-row">
+          <span className="filter-label"><Filter size={13}/>Filter</span>
+          <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+            <option value="All">All statuses</option>
+            {FOLLOWUP_STATUSES.map(s=><option key={s}>{s}</option>)}
+          </select>
+          <button className="icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} className={loading?"spin":""}/></button>
+        </div>
+      </div>
+
+      {loading ? <div className="empty"><Loader2 size={22} className="spin"/></div>
+      : filtered.length===0 ? (
+        <div className="empty">
+          <p className="empty-title">No First Timers to follow up</p>
+          <p className="empty-sub">First Timers assigned to this network will show up here.</p>
+        </div>
+      ) : (
+        <div className="ft-list">
+          {filtered.map(r=>(
+            <div key={r.ID} className="ft-card">
+              <div className="ft-main">
+                <div className="ft-name-line">
+                  <span className="ft-name">{r.Name}</span>
+                  {r.Decision && <span className="ft-decision">{r.Decision}</span>}
+                </div>
+                <div className="ft-meta">
+                  {r.ContactNumber && <span><Phone size={11}/>{r.ContactNumber}</span>}
+                  {r.DateVisited && <span><Calendar size={11}/>{ftFormatDate(r.DateVisited)}</span>}
+                  {r.InvitedBy && <span>Invited by {r.InvitedBy}</span>}
+                </div>
+                <div className="ft-assign">Assigned to <strong>{r.AssignedLeaderName || "—"}</strong></div>
+              </div>
+              <div className="ft-actions">
+                <span className={`ft-status ${ftStatusClass(r.FollowUpStatus)}`}>{r.FollowUpStatus}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState("");
   const [route,   setRoute]   = useState({screen:"home"});
+  const [section, setSection] = useState("report"); // "report" | "consolidation"
   const [modalOpen, setModalOpen] = useState(false);
   const [editing,   setEditing]   = useState(null);
   const [saving,    setSaving]    = useState(false);
@@ -2138,7 +2260,7 @@ export default function App() {
     <div className="shell" data-textsize={textSize}>
       <style>{CSS}</style>
       <header className="topbar">
-        <button className="brand" onClick={goHome}>
+        <button className="brand" onClick={()=>{setSection("report");goHome();}}>
           <span className="brand-mark">JCR</span>
           <span className="brand-name">Sonny Claudio's Cell Report</span>
         </button>
@@ -2151,15 +2273,26 @@ export default function App() {
             <ZoomIn size={15}/>
             <span className="resize-btn-label">{SIZE_LABELS[textSize]}</span>
           </button>
-          {route.screen!=="home"&&
-            <button className="icon-btn" onClick={goHome} title="Home"><Home size={15}/></button>}
+          {(route.screen!=="home"||section!=="report")&&
+            <button className="icon-btn" onClick={()=>{setSection("report");goHome();}} title="Home"><Home size={15}/></button>}
           <button className="icon-btn" onClick={load} title="Refresh">
             <RefreshCw size={15} className={loading?"spin":""}/>
           </button>
         </div>
       </header>
 
+      <nav className="tabs">
+        <button className={`tab${section==="report"?" tab-active":""}`} onClick={()=>setSection("report")}>
+          <LayoutDashboard size={15}/>Cell Report
+        </button>
+        <button className={`tab${section==="consolidation"?" tab-active":""}`} onClick={()=>setSection("consolidation")}>
+          <ClipboardList size={15}/>Consolidation
+        </button>
+      </nav>
+
       <main className="main">
+        {section==="consolidation"&&<ConsolidationScreen/>}
+        <div style={{display:section==="report"?"block":"none"}}>
         {route.screen==="home"&&<HomeScreen members={members} leaders={leaders} loading={loading} error={error} onRetry={load} onEnter={goGender}/>}
         {route.screen==="gender"&&<GenderScreen gender={route.gender} leaders={leaders} members={members} loading={loading} goHome={goHome} onPickLeader={l=>goLeader(route.gender,l)} onAddLeader={()=>{setEditingLdr(null);setLdrModal(true);}} onEditLeader={l=>{setEditingLdr(l);setLdrModal(true);}} onDeleteLeader={l=>setDelTarget({...l,__cascade:true})}/>}
         {route.screen==="leader"&&<LeaderScreen gender={route.gender} leader={route.leader} members={members} goHome={goHome} goGender={()=>goGender(route.gender)} onPickCell={cell=>cell==="Open Cell"?goOpenCell(route.gender,route.leader):goCloseCell(route.gender,route.leader)} onEditLeader={l=>{setEditingLdr(l);setLdrModal(true);}}/>}
@@ -2169,6 +2302,7 @@ export default function App() {
         {route.screen==="subopen"&&<SubLeaderOpenScreen gender={route.gender} leader={route.leader} subLeader={route.subLeader} members={members} loading={loading} goHome={goHome} goGender={()=>goGender(route.gender)} goLeader={()=>goLeader(route.gender,route.leader)} goCloseCell={()=>goCloseCell(route.gender,route.leader)} goSubLeader={()=>goSubLeader(route.gender,route.leader,route.subLeader)} onAdd={()=>{setEditing(null);setModalOpen(true);}} onEdit={m=>{setEditing(m);setModalOpen(true);}} onDelete={m=>setDelTarget(m)} onViewLGLeaderCell={handleViewLGLeaderCell} onProceedToClose={handleProceedToCloseClick} onPickTimothy={handlePickTimothy}/>}
         {route.screen==="subclose"&&<SubLeaderCloseScreen gender={route.gender} leader={route.leader} subLeader={route.subLeader} members={members} loading={loading} goHome={goHome} goGender={()=>goGender(route.gender)} goLeader={()=>goLeader(route.gender,route.leader)} goCloseCell={()=>goCloseCell(route.gender,route.leader)} goSubLeader={()=>goSubLeader(route.gender,route.leader,route.subLeader)} onAdd={()=>{setEditing(null);setModalOpen(true);}} onEdit={m=>{setEditing(m);setModalOpen(true);}} onDelete={m=>setDelTarget(m)} onPickDeepLeader={deep=>navigate({screen:"subleader",gender:route.gender,leader:route.leader,subLeader:deep})}/>}
         {route.screen==="lglcell"&&<LGLeaderCellScreen gender={route.gender} leader={route.leader} lglMember={route.lglMember} members={members} loading={loading} goHome={goHome} goGender={()=>goGender(route.gender)} goLeader={()=>goLeader(route.gender,route.leader)} goOpenCell={()=>goOpenCell(route.gender,route.leader)} onAdd={()=>{setEditing(null);setModalOpen(true);}} onEdit={m=>{setEditing(m);setModalOpen(true);}} onDelete={m=>setDelTarget(m)} onPickTimothy={handlePickTimothy}/>}
+        </div>
       </main>
 
       <MemberModal
@@ -2537,4 +2671,30 @@ body{background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMac
   .stat:last-child{border-bottom:none;padding-bottom:0;}
   .stat:not(:first-child){padding:0 0 12px;}
 }
+/* ── Tabs + Consolidation ───────────────────────────────────────────── */
+.tabs{display:flex;gap:6px;padding:10px 28px 0;border-bottom:1px solid var(--line);background:var(--paper);}
+.tab{display:inline-flex;align-items:center;gap:7px;background:none;border:none;border-bottom:3px solid transparent;padding:10px 14px;font-size:14px;font-weight:700;color:var(--faint);cursor:pointer;font-family:inherit;}
+.tab:hover{color:var(--ink);}
+.tab-active{color:var(--ink);border-bottom-color:var(--sage-d,#4C6A58);}
+.consol-wrap{max-width:720px;}
+.filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.filter-label{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:var(--faint);}
+.filter-row select{font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--ink);font-family:inherit;}
+.ft-list{display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+.ft-card{background:var(--raised);padding:16px 18px;display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+.ft-main{display:flex;flex-direction:column;gap:6px;flex:1;min-width:220px;}
+.ft-name-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ft-name{font-weight:700;font-size:15px;}
+.ft-decision{font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;background:#F1ECDF;color:#5B5447;}
+.ft-status{font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;white-space:nowrap;}
+.status-new{background:#EEF1F6;color:#2B3A5C;}
+.status-mid{background:#FEF3C7;color:var(--amber,#8B6914);}
+.status-good{background:#E6F4ED;color:var(--green,#3A7D5C);}
+.status-bad{background:#F8E9E5;color:var(--danger,#B23B3B);}
+.ft-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--faint);}
+.ft-meta span{display:flex;align-items:center;gap:4px;}
+.ft-assign{font-size:12.5px;color:var(--faint);}
+.ft-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+@media(max-width:480px){ .tabs{padding:8px 14px 0;} }
+
 `;
